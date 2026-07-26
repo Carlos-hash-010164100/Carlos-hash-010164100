@@ -1,0 +1,147 @@
+Vamos a asegurar nuestro servidor Linux Ubuntu 
+
+LAs versiones de ubuntu mas recientes vienen con iptables por defecto, iniciaremos sesion via ssh como usuario estandar, y verificaremos si iptables esta presente con el siguiente comando:
+
+### sudo iptables -V
+Eso nos dara un resultado de verrion, de lo contrario instalar con:
+### sudo apt install iptables
+
+Ahora instalaremos iptables-persistent con:
+
+### sudo apt install iptables-persistent
+
+Aparecera un asistente de instalacion, se mostrara elñ archivo en el que el servidor guardara las reglas de firewall por defecto ( /etc/iptables/rules.v4 ) informando que las reglas de este archivo se cargaran
+al arrancar el sistema. Ademas necesitas guardar manuealmente cualquier cambio en las reglas del firewall.
+
+Nota: si no instalamos este componente tendremos que reconfigurar el firewall cada vez que iniciemos el servidor.
+Ahora podemos revisar las cadenas de politicas actuales con:
+### sudo iptables -L
+Por defecto nos dara lo siguiente:
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+
+La primera regla dice que permite todo el trafico de entrada, salida y renvio. Es funcional pero es inseguro asi que vamos a modificarlo co las siguientes reglas:
+sudo iptables -A INPUT -p tcp --dport 22 -m conntrack \ --ctstate NEW,ESTABLISHED -j accept
+
+Desglose por partes
+-A INPUT — Añade la regla a la cadena INPUT (tráfico que entra al servidor).
+
+-p tcp — Solo aplica a tráfico TCP.
+
+--dport 22 — Solo al puerto 22 → SSH.
+
+-m conntrack — Usa el módulo de seguimiento de conexiones.
+
+--ctstate NEW,ESTABLISHED
+
+NEW → paquetes que inician una conexión SSH.
+
+ESTABLISHED → paquetes que pertenecen a una conexión SSH ya establecida.
+
+-j ACCEPT — Permite el tráfico.
+
+Ahora Añadiremos mas reglas para descartar el trafico invalido:
+### sudo iptables -A OUTPUT -m state --state INVALID -j DROP
+### sudo iptables -A INPUT -m state --state INVALID -j DROP
+
+Ahora añadimos reglas para aceptar el trafico relacionado con conexiones existente, asi como la direccion de loopback para evitar cualquier problema y diagnosticar problemas de red.
+Nota: Una direccion de loopback es una direccion intedrna que las computadoras usan para pruebas.
+### sudo iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+### sudo iptables -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+### sudo iptables -A INPUT -i lo -j ACCEPT
+
+Nota: de esta manera aceptamos trafico que coincide con una conexion conocida o relacionada con una conexion en proceso y descarta cualquier paquete inesperado. ( lo que protege la red de escaneo de red no solicitadfa o maliciosa).
+Seguido a aplicar todas estas reglas procedemos a listar las reglas actuales con :
+### sudo iptables -L
+
+Ahora necesitamos estar seguros que permite la conexion via ssh ya que la usaremos comunmente, para permitir ssh de manera general en caso de que direfentes dispositivos se conecte se usa lo que ya aplicamos:
+### sudo iptables -A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+Pero en el caso de querer aumentar nuestra seguridad lo mejor seria establecer reglas que permitan ssh solo hacia y desde direcciones IP o rangois especificos.
+Para eso reduciremos nuestra superficie de ataque con:
+### iptables -A INPUT -p tcp -s 192.168.1.25 --dport 22 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+
+Ahora le podeos de decir a iptables que hacer con todo el otro trafico ( el que no queremos que entre o salga de el servidor o red) Una vez creadas las reglas que queremos, ejemplo las antes añadidas
+podemos bloquear, denegar, o descartar todo lo demas. 
+Nota: esto se hace despues de aver agregado las reglas de firewall anteriores d elo contrario podriamos perder conectivdad y no poder volver a ahcerelo via SSH. Usar el argumento -P establece el comportamiento 
+por defecto de las cadenas de politicas y ñle dice que hacer a ipotables con el trafico que no coincide con las reglas establecidas. Para lograr eso ai que establecer el comportamiento por defecto de las cadenas
+de poiliticas a DROP este trafico:
+### sudo iptables -P INPUT DROP
+### sudo iptables -P FORWARD DROP
+### sudo iptables -P OUTPUT DROP
+
+Nota: Usar -P es diferente de -A  y -I usados anteriormente, porque no afecta  a las reglas del firewall en si; en cambio trata con las politicas generales que gobiernan el trafico de la nuestra red.
+Mientras que -A e -I añaden o insertan reglas de firewall, respectivamente, -P configura el comportamiento del firewall un nivel mas arriba.
+
+Volvemos a verificar las cadenas de iptables con :
+### sudo iptables -L
+deveria quedar asi:
+
+Chain INPUT (policy DROP)
+target     prot opt source     destination
+DROP       all  --  anywhere   anywhere     state INVALID
+ACCEPT     all  --  anywhere   anywhere     state RELATED,ESTABLISHED
+ACCEPT     all  --  anywhere   anywhere
+ACCEPT     tcp  --  anywhere   anywhere     tcp dpt:ssh ctstate NEW
+
+Chain FORWARD (policy DROP)
+target     prot opt source     destination
+
+Chain OUTPUT (policy DROP)
+target     prot opt source     destination
+DROP       all  --  anywhere   anywhere     state INVALID
+ACCEPT     all  --  anywhere   anywhere     state RELATED,ESTABLISHED
+
+Ahora para evitar problema de que el DNS está fallando, porque el firewall ahora está bloqueando todo lo que no esté permitido explícitamente, incluyendo el DNS (que corre en el puerto 53). Resolveremos
+este problema añadiendo las siguientes reglas:
+
+### $ sudo iptables -A OUTPUT -p udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+### $ sudo iptables -A OUTPUT -p tcp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+
+Estos comandos añaden reglas a la cadena de salida, permitiendo a este servidor hacer peticiones salientes para resolución de nombres de dominio en UDP y TCP puerto 53. Con la adición de estas reglas, el servidor puede resolver nombres de dominio.Prueba tu firewall intentando hacer ping al servidor desde otro dispositivo en tu red; deberías recibir un error, ya que ICMP no está permitido a través del firewall.
+De igual forma, si intentas hacer ping a cualquier cosa desde el propio servidor, deberías recibir un error similar:
+### ping google.com -c 5
+
+Si se perdieron  los paquetes vamos bien!
+
+Ahora si decidimos usar PING:
+ICMP puede ser una herramienta de diagnóstico tan útil que podrías decidir permitir el ping a través de tu firewall iptables. Para hacerlo, añade las siguientes reglas:
+
+### sudo iptables -A INPUT -p icmp -j ACCEPT
+### sudo iptables -A OUTPUT -p icmp -j ACCEPT
+PENDIENTE:
+Puede que descubras que necesitas abrir puertos adicionales en el firewall. Por ejemplo, si tienes un proxy instalado o si construyes uno después de leer el Capítulo 6, necesitarás abrir el puerto del proxy (3128) en tu firewall:javascript$ sudo iptables -A OUTPUT -p tcp --dport 3128 -m conntrack --ctstate NEW -j ACCEPTEn la mayoría de los casos, deberías bloquear la navegación web en general desde los servidores — hay pocas, si es que hay alguna, razones legítimas para usar servidores para este tipo de actividad. Idealmente, tanto desde un punto de vista administrativo como de seguridad, los servidores deberían tener un solo propósito. Permitir cualquier servicio adicional —especialmente navegar por internet— en un servidor resulta en una superficie de ataque más grande y crea vulnerabilidades potenciales en tu red.
+
+
+
+
+
+
+Si decides permitir este tráfico desde tu(s) servidor(es) para que el servidor pueda obtener actualizaciones de software, crea reglas de salida para los puertos 80 y 443, los puertos por defecto para tráfico HTTP y HTTPS, respectivamente:javascript$ sudo iptables -A OUTPUT -p tcp --dport 80 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+$ sudo iptables -A OUTPUT -p tcp --dport 443 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPTLa única diferencia entre las reglas HTTP y HTTPS es el número de puerto.Cada vez que añadas una regla, deberías probarla. La forma más fácil de hacerlo, en este caso, será probar primero tu capacidad para navegar por internet usando un navegador web en el servidor (si tienes la interfaz gráfica instalada) o usando curl en la terminal bash. Empieza instalando curl:javascript$ sudo apt install curlSi no tienes reglas que permitan HTTP y HTTPS, el comando de instalación fallará, ya que las actualizaciones típicamente se hacen por HTTP. Sin embargo, si sí tienes esas reglas puestas, curl debería haberse instalado correctamente, así que ahora puedes asegurarte de que los puertos 80 y 443 están abiertos:javascript$ curl http://icanhazip.com
+ipaddressLa dirección icanhazip.com es un proveedor de servicio público que devolverá tu dirección IP pública actual cuando se le consulte con curl. Si te muestra tu IP pública, tu firewall está configurado correctamente.Si recibes un error, una de tus reglas puede tener un problema. Revisa si hay errores tipográficos, y si todo lo demás falla, borra tus reglas y empieza de nuevo usando los parámetros -D o -F discutidos anteriormente. Una vez que el firewall esté configurado correctamente, siéntete libre de añadir más reglas según consideres necesario.Un conjunto particular de reglas para añadir son aquellas que bloquean tráfico hacia direcciones IP específicas. Dado que la mayoría de sitios web públicos pueden tener múltiples direcciones IP, sin embargo, bloquear un sitio usando iptables no es la mejor opción, ya que tendrías que crear reglas para cada dirección IP única. En la mayoría de los casos, estarías mejor usando un proxy, lo cual cubriremos en el Capítulo 6.Si quieres usar iptables para bloquear sitios —digamos, por ejemplo, para bloquear todo el tráfico hacia y desde squirreldirectory.com, que actualmente reside en la dirección IP 206.189.69.35— añadirías las siguientes reglas a tus cadenas INPUT y OUTPUT:javascript$ sudo iptables -A INPUT -s 206.189.69.35 -j DROP
+$ sudo iptables -A OUTPUT -s 206.189.69.35 -j DROPTípicamente, añadirías este tipo de regla para permitir o denegar tráfico desde una dirección IP privada estática que no se espera que cambie, y usarías un proxy para direcciones IP públicas o URLs.
+
+
+
+Registrando el Comportamiento de iptables
+Ya has instalado y configurado el firewall iptables, pero no le has dicho que registre nada, por lo que no produce registros de su comportamiento, lo que puede dificultar la solución de problemas o determinar si el tráfico bloqueado debería haber sido bloqueado.Primero, crea una nueva cadena de política personalizada. Nota que esta configuración es un ejemplo de donde el orden de las reglas es crítico. Puedes nombrar la cadena como quieras, pero aquí la llamaremos LOGGING:javascript$ sudo iptables -N LOGGINGEl parámetro -N se usa para crear nuevas cadenas.Luego, añade una regla al final de cada una de las cadenas INPUT y OUTPUT que le diga a iptables que envíe cualquier tráfico que aún no haya coincidido con una regla a la nueva cadena LOGGING:javascript$ sudo iptables -A INPUT -j LOGGING
+$ sudo iptables -A OUTPUT -j LOGGINGDespués, dile a iptables que registre solo una vez por minuto por cada tipo de paquete descartado:javascript$ sudo iptables -A LOGGING -m limit --limit 1/minute -j LOG \
+  --log-prefix "FW-Dropped: " --log-level 4Este límite es opcional, y puedes establecerlo en cualquier período, como 1/second, 1/minute, 1/hour, o 1/day. Limitar el número de entradas de log reduce tanto el ruido como el tamaño de los archivos de log. Añade un prefijo ("FW-Dropped: ") a la información del log para que las entradas del log del firewall sean fáciles de identificar. Establecer el nivel de registro a 4 registrará eventos de nivel warning, indicando un evento que tiene un efecto material en el servidor o el firewall. Aumentar el número resulta en más eventos con menor severidad siendo registrados, lo cual es útil al solucionar problemas. Los niveles de log 1 a 3 solo registrarán eventos o errores con severidad más alta que el nivel warning.Finalmente, el siguiente comando indica al firewall que, una vez registrado, los paquetes deben ser descartados:javascript$ sudo iptables -A LOGGING -j DROPTu firewall ahora registrará todos los paquetes descartados tanto de entrada como de salida del servidor. Por defecto, esos logs se guardarán en /var/log/messages.El último paso es guardar tu configuración de firewall. Recuerda que las configuraciones de iptables son temporales por defecto y no sobrevivirán a un reinicio, por eso instalamos iptables-persistent en el Proyecto 12. Para guardar tu configuración, ejecuta el siguiente comando (netfilter es el comando usado por iptables-persistent para este propósito):
+
+$ sudo netfilter-persistent save
+run-parts: executing /usr/share/netfilter-persistent/plugins.d/15-ip4tables save
+run-parts: executing /usr/share/netfilter-persistent/plugins.d/25-ip6tables save
+
+si llegase a ocurri un fallo:
+### sudo apt install debianutils
+
+en caso de no estar.
+
+
+Con eso, el firewall está listo para funcionar.Puedes considerar añadir reglas temporales a tu firewall, pero recuerda el adagio de que "nada es más permanente que una regla temporal de firewall" (Austin Scott). En el caso de añadir una regla temporal para permitir a un usuario descargar un archivo de internet, por ejemplo, sería mejor encontrar una solución diferente, como usar otro host. Si una regla como esta es creada y dejada en la configuración del firewall, crea una vulnerabilidad y reduce la seguridad ofrecida por el firewall. Evita reglas temporales siempre que sea posible.
