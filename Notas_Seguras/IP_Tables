@@ -115,33 +115,89 @@ ICMP puede ser una herramienta de diagnóstico tan útil que podrías decidir pe
 ### sudo iptables -A INPUT -p icmp -j ACCEPT
 ### sudo iptables -A OUTPUT -p icmp -j ACCEPT
 PENDIENTE:
-Puede que descubras que necesitas abrir puertos adicionales en el firewall. Por ejemplo, si tienes un proxy instalado o si construyes uno después de leer el Capítulo 6, necesitarás abrir el puerto del proxy (3128) en tu firewall:javascript$ sudo iptables -A OUTPUT -p tcp --dport 3128 -m conntrack --ctstate NEW -j ACCEPTEn la mayoría de los casos, deberías bloquear la navegación web en general desde los servidores — hay pocas, si es que hay alguna, razones legítimas para usar servidores para este tipo de actividad. Idealmente, tanto desde un punto de vista administrativo como de seguridad, los servidores deberían tener un solo propósito. Permitir cualquier servicio adicional —especialmente navegar por internet— en un servidor resulta en una superficie de ataque más grande y crea vulnerabilidades potenciales en tu red.
+🔧 Abrir puertos adicionales cuando sea necesario
+Si instalas un proxy (por ejemplo, en el Capítulo 6), necesitarás abrir su puerto — normalmente 3128:
 
+bash
+sudo iptables -A OUTPUT -p tcp --dport 3128 -m conntrack --ctstate NEW -j ACCEPT
+En la mayoría de los casos, no deberías permitir navegación web desde servidores.
+Los servidores deben tener un propósito único; permitir navegación aumenta la superficie de ataque y crea vulnerabilidades.
 
+🌐 Permitir tráfico HTTP/HTTPS para actualizaciones
+Si decides permitir tráfico web solo para actualizaciones del sistema, abre los puertos 80 y 443:
 
+bash
+sudo iptables -A OUTPUT -p tcp --dport 80 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+sudo iptables -A OUTPUT -p tcp --dport 443 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+La única diferencia entre ambas reglas es el número de puerto.
 
+🧪 Probar reglas HTTP/HTTPS
+Primero instala curl:
 
+bash
+sudo apt install curl
+Si no tienes reglas para HTTP/HTTPS, esta instalación fallará.
 
-Si decides permitir este tráfico desde tu(s) servidor(es) para que el servidor pueda obtener actualizaciones de software, crea reglas de salida para los puertos 80 y 443, los puertos por defecto para tráfico HTTP y HTTPS, respectivamente:javascript$ sudo iptables -A OUTPUT -p tcp --dport 80 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
-$ sudo iptables -A OUTPUT -p tcp --dport 443 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPTLa única diferencia entre las reglas HTTP y HTTPS es el número de puerto.Cada vez que añadas una regla, deberías probarla. La forma más fácil de hacerlo, en este caso, será probar primero tu capacidad para navegar por internet usando un navegador web en el servidor (si tienes la interfaz gráfica instalada) o usando curl en la terminal bash. Empieza instalando curl:javascript$ sudo apt install curlSi no tienes reglas que permitan HTTP y HTTPS, el comando de instalación fallará, ya que las actualizaciones típicamente se hacen por HTTP. Sin embargo, si sí tienes esas reglas puestas, curl debería haberse instalado correctamente, así que ahora puedes asegurarte de que los puertos 80 y 443 están abiertos:javascript$ curl http://icanhazip.com
-ipaddressLa dirección icanhazip.com es un proveedor de servicio público que devolverá tu dirección IP pública actual cuando se le consulte con curl. Si te muestra tu IP pública, tu firewall está configurado correctamente.Si recibes un error, una de tus reglas puede tener un problema. Revisa si hay errores tipográficos, y si todo lo demás falla, borra tus reglas y empieza de nuevo usando los parámetros -D o -F discutidos anteriormente. Una vez que el firewall esté configurado correctamente, siéntete libre de añadir más reglas según consideres necesario.Un conjunto particular de reglas para añadir son aquellas que bloquean tráfico hacia direcciones IP específicas. Dado que la mayoría de sitios web públicos pueden tener múltiples direcciones IP, sin embargo, bloquear un sitio usando iptables no es la mejor opción, ya que tendrías que crear reglas para cada dirección IP única. En la mayoría de los casos, estarías mejor usando un proxy, lo cual cubriremos en el Capítulo 6.Si quieres usar iptables para bloquear sitios —digamos, por ejemplo, para bloquear todo el tráfico hacia y desde squirreldirectory.com, que actualmente reside en la dirección IP 206.189.69.35— añadirías las siguientes reglas a tus cadenas INPUT y OUTPUT:javascript$ sudo iptables -A INPUT -s 206.189.69.35 -j DROP
-$ sudo iptables -A OUTPUT -s 206.189.69.35 -j DROPTípicamente, añadirías este tipo de regla para permitir o denegar tráfico desde una dirección IP privada estática que no se espera que cambie, y usarías un proxy para direcciones IP públicas o URLs.
+Luego prueba:
 
+bash
+curl http://icanhazip.com
+Si ves tu IP pública → el firewall está funcionando correctamente.
+Si recibes error → revisa reglas, errores tipográficos o reinicia desde cero usando:
 
+bash
+sudo iptables -F
+sudo iptables -X
+🚫 Bloquear tráfico hacia direcciones IP específicas
+Ejemplo: bloquear tráfico hacia/desde 206.189.69.35:
 
-Registrando el Comportamiento de iptables
-Ya has instalado y configurado el firewall iptables, pero no le has dicho que registre nada, por lo que no produce registros de su comportamiento, lo que puede dificultar la solución de problemas o determinar si el tráfico bloqueado debería haber sido bloqueado.Primero, crea una nueva cadena de política personalizada. Nota que esta configuración es un ejemplo de donde el orden de las reglas es crítico. Puedes nombrar la cadena como quieras, pero aquí la llamaremos LOGGING:javascript$ sudo iptables -N LOGGINGEl parámetro -N se usa para crear nuevas cadenas.Luego, añade una regla al final de cada una de las cadenas INPUT y OUTPUT que le diga a iptables que envíe cualquier tráfico que aún no haya coincidido con una regla a la nueva cadena LOGGING:javascript$ sudo iptables -A INPUT -j LOGGING
-$ sudo iptables -A OUTPUT -j LOGGINGDespués, dile a iptables que registre solo una vez por minuto por cada tipo de paquete descartado:javascript$ sudo iptables -A LOGGING -m limit --limit 1/minute -j LOG \
-  --log-prefix "FW-Dropped: " --log-level 4Este límite es opcional, y puedes establecerlo en cualquier período, como 1/second, 1/minute, 1/hour, o 1/day. Limitar el número de entradas de log reduce tanto el ruido como el tamaño de los archivos de log. Añade un prefijo ("FW-Dropped: ") a la información del log para que las entradas del log del firewall sean fáciles de identificar. Establecer el nivel de registro a 4 registrará eventos de nivel warning, indicando un evento que tiene un efecto material en el servidor o el firewall. Aumentar el número resulta en más eventos con menor severidad siendo registrados, lo cual es útil al solucionar problemas. Los niveles de log 1 a 3 solo registrarán eventos o errores con severidad más alta que el nivel warning.Finalmente, el siguiente comando indica al firewall que, una vez registrado, los paquetes deben ser descartados:javascript$ sudo iptables -A LOGGING -j DROPTu firewall ahora registrará todos los paquetes descartados tanto de entrada como de salida del servidor. Por defecto, esos logs se guardarán en /var/log/messages.El último paso es guardar tu configuración de firewall. Recuerda que las configuraciones de iptables son temporales por defecto y no sobrevivirán a un reinicio, por eso instalamos iptables-persistent en el Proyecto 12. Para guardar tu configuración, ejecuta el siguiente comando (netfilter es el comando usado por iptables-persistent para este propósito):
+bash
+sudo iptables -A INPUT -s 206.189.69.35 -j DROP
+sudo iptables -A OUTPUT -s 206.189.69.35 -j DROP
+Esto es útil para IPs privadas estáticas.
+Para sitios públicos con múltiples IPs → mejor usar un proxy.
 
-$ sudo netfilter-persistent save
+📜 Registro del comportamiento de iptables
+Por defecto, iptables no registra nada, lo cual dificulta diagnosticar problemas.
+
+1️⃣ Crear cadena personalizada de logging
+bash
+sudo iptables -N LOGGING
+2️⃣ Enviar tráfico no coincidente a la cadena LOGGING
+bash
+sudo iptables -A INPUT -j LOGGING
+sudo iptables -A OUTPUT -j LOGGING
+3️⃣ Registrar solo una vez por minuto
+bash
+sudo iptables -A LOGGING -m limit --limit 1/minute -j LOG \
+  --log-prefix "FW-Dropped: " --log-level 4
+--log-prefix añade texto identificable a los logs
+
+--log-level 4 registra eventos tipo warning
+
+Puedes usar: 1/second, 1/hour, 1/day, etc.
+
+4️⃣ Después de registrar, descartar paquetes
+bash
+sudo iptables -A LOGGING -j DROP
+Los logs se guardan en:
+
+Código
+/var/log/messages
+💾 Guardar configuración del firewall
+bash
+sudo netfilter-persistent save
+Salida típica:
+
+Código
 run-parts: executing /usr/share/netfilter-persistent/plugins.d/15-ip4tables save
 run-parts: executing /usr/share/netfilter-persistent/plugins.d/25-ip6tables save
+Si aparece un fallo:
 
-si llegase a ocurri un fallo:
-### sudo apt install debianutils
+bash
+sudo apt install debianutils
+⚠️ Sobre reglas temporales
+“Nada es más permanente que una regla temporal de firewall.” — Austin Scott
 
-en caso de no estar.
-
-
-Con eso, el firewall está listo para funcionar.Puedes considerar añadir reglas temporales a tu firewall, pero recuerda el adagio de que "nada es más permanente que una regla temporal de firewall" (Austin Scott). En el caso de añadir una regla temporal para permitir a un usuario descargar un archivo de internet, por ejemplo, sería mejor encontrar una solución diferente, como usar otro host. Si una regla como esta es creada y dejada en la configuración del firewall, crea una vulnerabilidad y reduce la seguridad ofrecida por el firewall. Evita reglas temporales siempre que sea posible.
+Evita reglas temporales siempre que sea posible.
+Si un usuario necesita descargar algo, usa otro host en lugar de abrir puertos temporalmente.
