@@ -1,0 +1,24 @@
+# Lab: Escalada vía Reverse Shell – Mitigación Sudo
+
+## Vulnerabilidad encontrada
+Una reverse shell obtenida como usuario `operadorlocal` podía ejecutar `sudo su` sin contraseña debido a que heredaba el ticket de sudo de la sesión gráfica del usuario legítimo.
+
+## Causa raíz
+- `timestamp_timeout=15` (valor por defecto) → el ticket de sudo permanece válido 15 minutos.
+- `tty_tickets` desactivado o cache compartido → el ticket se comparte entre TTYs.
+- El payload `curl | bash` se ejecutó dentro de la misma sesión donde ya se había usado sudo previamente.
+
+## Mitigación aplicada en `/etc/sudoers` usando `visudo`
+
+Agregar reglas de seguridad:
+
+```bash
+Defaults timestamp_timeout=0
+Defaults use_pty
+Defaults tty_tickets
+Efecto de cada línea
+timestamp_timeout=0: obliga a pedir contraseña SIEMPRE, sin cache.
+
+use_pty: fuerza a sudo a usar un pseudo‑terminal seguro.
+
+tty_tickets: cada TTY tiene su propio ticket; no se comparte entre shells crudas.
